@@ -1,60 +1,91 @@
+from fastapi import FastAPI, HTTPException
 from rdkit import Chem
 
-class Molecule:
+app = FastAPI()
+
+class MoleculeManager:
     def __init__(self):
         self.molecules = {}
-    
-    def add_molecules(self,identifier,smiles):
+
+    def add_molecule(self, identifier, smiles):
         mol = Chem.MolFromSmiles(smiles)
         if mol:
             self.molecules[identifier] = smiles
         else:
-            raise ValueError("Invalid string")
-        
-    def get_molecules(self, identifier):
+            raise ValueError("Invalid SMILES string")
+
+    def get_molecule(self, identifier):
         return self.molecules.get(identifier, None)
-    
-    def update_molecules(self, identifier, smiles):
+
+    def update_molecule(self, identifier, smiles):
         mol = Chem.MolFromSmiles(smiles)
         if mol:
             self.molecules[identifier] = smiles
         else:
-            raise ValueError ("Invaid string")
-        
-    def delete_molecules(self, identifier):
+            raise ValueError("Invalid SMILES string")
+
+    def delete_molecule(self, identifier):
         if identifier in self.molecules:
             del self.molecules[identifier]
         else:
-            raise ValueError ("Identifier invalid")
-    
+            raise KeyError("Identifier not found")
+
     def list_molecules(self):
         return self.molecules
-    
-    def substructure_search(smiles_list, sub_smiles):
-        sub_mol = Chem.MolFromSmiles(sub_smiles) #for conversion substructure SMILES to RDKIT molecujle
-        matches = []        #empty list for storage of molecules
-        for smiles in smiles_list:  #converts each smilel to rdkit mol and if it is created it checks if it is valid structure
+
+    def substructure_search(self, sub_smiles):
+        sub_mol = Chem.MolFromSmiles(sub_smiles)
+        if not sub_mol:
+            raise ValueError("Invalid substructure SMILES string")
+        matches = []
+        for identifier, smiles in self.molecules.items():
             mol = Chem.MolFromSmiles(smiles)
-            if mol and mol.HasSubstructMatch(sub_mol):      
-            #adds molecules that are matched to list
-                matches.append(smiles)
+            if mol and mol.HasSubstructMatch(sub_mol):
+                matches.append((identifier, smiles))
         return matches
-    
 
-mol = Molecule()
+manager = MoleculeManager()
 
-mol.add_molecules("mol1", "CCO")
-mol.add_molecules("mol2", "c1ccccc1")
-mol.add_molecules("mol3", "CC(=O)O")
+@app.post("/molecules/")
+def add_molecule(identifier: str, smiles: str):
+    try:
+        manager.add_molecule(identifier, smiles)
+        return {"message": "Molecule added successfully"}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
-print("Get function:", mol.get_molecules("mol1"))
+@app.get("/molecules/{identifier}")
+def get_molecule(identifier: str):
+    molecule = manager.get_molecule(identifier)
+    if molecule:
+        return {"identifier": identifier, "smiles": molecule}
+    else:
+        raise HTTPException(status_code=404, detail="Molecule not found")
 
-print("List function:", mol.list_molecules())
+@app.put("/molecules/{identifier}")
+def update_molecule(identifier: str, smiles: str):
+    try:
+        manager.update_molecule(identifier, smiles)
+        return {"message": "Molecule updated successfully"}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
-mol.delete_molecules("mol2")
+@app.delete("/molecules/{identifier}")
+def delete_molecule(identifier: str):
+    try:
+        manager.delete_molecule(identifier)
+        return {"message": "Molecule deleted successfully"}
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e))
 
-mol.update_molecules("mol2", "CCCOCCC")
+@app.get("/molecules/")
+def list_molecules():
+    return manager.list_molecules()
 
-substructure = "c1ccccc1"
-result = mol.substructure_search(substructure)
-print(result) 
+@app.post("/molecules/search/")
+def substructure_search(sub_smiles: str):
+    try:
+        results = manager.substructure_search(sub_smiles)
+        return results
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
