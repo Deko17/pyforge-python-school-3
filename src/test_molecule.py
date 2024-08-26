@@ -2,7 +2,6 @@ import pytest
 import logging
 from main import main  # Replace `main` with your actual module name if it's different
 
-# Configure logging for tests
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
