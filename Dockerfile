@@ -1,7 +1,7 @@
 FROM continuumio/miniconda3
 RUN conda install -c conda-forge rdkit -y
 
-WORKDIR /app
+WORKDIR /pyforge-python-school-3
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
