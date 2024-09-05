@@ -1,14 +1,22 @@
 version: '3.8'
 
 services:
-  app:
+  fastapi:
     build: .
     ports:
       - "8000:8000"
-    volumes:
-      - ./src:/app/src
     depends_on:
       - redis
+    volumes:
+      - .:/app
+
+  celery_worker:
+    build: .
+    command: celery -A app.celery_worker worker --loglevel=info
+    depends_on:
+      - redis
+    volumes:
+      - .:/app
 
   redis:
     image: "redis:alpine"

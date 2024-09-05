@@ -3,6 +3,9 @@ import json
 from fastapi import FastAPI, HTTPException, Query
 from rdkit import Chem
 import redis
+from celery.result import AsyncResult
+from app.tasks import substructure_search_task
+from app. celery_maker import celery
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -10,7 +13,6 @@ logger = logging.getLogger(__name__)
 app = FastAPI()
 
 redis_client = redis.Redis(host='redis', port=6379, db=0)
-
 CACHE_EXPIRATION = 60  
 
 class MoleculeManager:
@@ -69,30 +71,6 @@ class MoleculeManager:
                 yield molecule
         return molecule_iterator()
 
-    def substructure_search(self, sub_smiles):
-        logger.info(f"Performing substructure search for: {sub_smiles}")
-
-        cache_key = f"substructure_search:{sub_smiles}"
-        cached_result = redis_client.get(cache_key)
-        if cached_result:
-            logger.info("Returning cached substructure search result")
-            return json.loads(cached_result)
-
-        sub_mol = Chem.MolFromSmiles(sub_smiles)
-        if not sub_mol:
-            logger.error(f"Substructure search failed. Invalid substructure SMILES string: {sub_smiles}")
-            raise ValueError("Invalid substructure SMILES string")
-
-        matches = []
-        for identifier, smiles in self.molecules.items():
-            mol = Chem.MolFromSmiles(smiles)
-            if mol and mol.HasSubstructMatch(sub_mol):
-                matches.append((identifier, smiles))
-
-        redis_client.setex(cache_key, CACHE_EXPIRATION, json.dumps(matches))
-        logger.info(f"Substructure search completed with {len(matches)} matches. Cached result.")
-        return matches
-
 manager = MoleculeManager()
 
 @app.post("/molecules/")
@@ -118,7 +96,7 @@ def update_molecule(identifier: str, smiles: str):
         return {"message": "Molecule updated successfully"}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    
+
 @app.delete("/molecules/{identifier}")
 def delete_molecule(identifier: str):
     try:
@@ -128,13 +106,22 @@ def delete_molecule(identifier: str):
         raise HTTPException(status_code=404, detail=str(e))
 
 @app.get("/molecules/")
-def list_molecules(limit: int = Query(None, description="Limit the number of molecules returned")):
+def list_molecules(limit: int = Query(None, description="Limit")):
     return list(manager.list_molecules(limit))
 
+### Substructure search using Celery
 @app.post("/molecules/search/")
-def substructure_search(sub_smiles: str):
-    try:
-        results = manager.substructure_search(sub_smiles)
-        return results
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+async def substructure_search(sub_smiles: str):
+    task = substructure_search_task.delay(sub_smiles, manager.molecules)
+    return {"task_id": task.id, "status": task.status}
+
+### Get task result
+@app.get("/tasks/{task_id}")
+async def get_task_result(task_id: str):
+    task_result = AsyncResult(task_id, app=celery)
+    if task_result.state == 'PENDING':
+        return {"task_id": task_id, "status": "Task is still processing"}
+    elif task_result.state == 'SUCCESS':
+        return {"task_id": task_id, "status": "Task completed", "result": task_result.result}
+    else:
+        return {"task_id": task_id, "status": task_result.state}
